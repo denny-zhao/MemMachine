@@ -222,11 +222,21 @@ class LanguageModelsConf(BaseModel):
         if isinstance(lm, cls):
             return lm
 
+        def _clean_empty_config(conf: dict) -> dict:
+            cleaned: dict = {}
+            for key, value in (conf or {}).items():
+                if isinstance(value, str) and value.strip() == "":
+                    continue
+                if value is None:
+                    continue
+                cleaned[key] = value
+            return cleaned
+
         openai_dict, aws_bedrock_dict, openai_chat_completions_dict = {}, {}, {}
 
         for lm_id, resource_definition in lm.items():
             provider = resource_definition.get("provider")
-            conf = resource_definition.get("config", {})
+            conf = _clean_empty_config(resource_definition.get("config", {}))
             if provider == "openai-responses":
                 openai_dict[lm_id] = OpenAIResponsesLanguageModelConf(**conf)
             elif provider == "openai-chat-completions":

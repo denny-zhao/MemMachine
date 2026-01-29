@@ -179,13 +179,25 @@ class EmbeddersConf(BaseModel):
         if isinstance(embedder, cls):
             return embedder
 
+        def _clean_empty_config(conf: dict) -> dict:
+            cleaned: dict = {}
+            for key, value in (conf or {}).items():
+                if isinstance(value, str) and value.strip() == "":
+                    continue
+                if value is None:
+                    continue
+                if key == "dimensions" and value == 0:
+                    continue
+                cleaned[key] = value
+            return cleaned
+
         amazon_bedrock_dict = {}
         openai_dict = {}
         sentence_transformer_dict = {}
 
         for embedder_id, resource_definition in embedder.items():
             provider = resource_definition.get(cls.PROVIDER_KEY)
-            conf = resource_definition.get(cls.CONFIG_KEY, {})
+            conf = _clean_empty_config(resource_definition.get(cls.CONFIG_KEY, {}))
             if provider == cls.OPENAI_KEY:
                 openai_dict[embedder_id] = OpenAIEmbedderConf(**conf)
             elif provider == cls.BEDROCK_KEY:

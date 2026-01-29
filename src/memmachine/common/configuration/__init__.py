@@ -274,6 +274,126 @@ class Configuration(BaseModel):
     # Path to the configuration file (set when loaded from file)
     _config_file_path: str | None = None
 
+    @model_validator(mode="after")
+    def _auto_disable_when_openai_incomplete(self) -> "Configuration":
+        """Auto-disable memory subsystems when OpenAI configs are empty."""
+
+        def _is_openai_incomplete(conf: Any) -> bool:
+            api_key = getattr(conf, "api_key", None)
+            base_url = getattr(conf, "base_url", None)
+            if api_key is None:
+                return False
+            try:
+                api_key_value = api_key.get_secret_value()
+            except Exception:
+                return False
+            if api_key_value != "":
+                return False
+            return base_url is None or (isinstance(base_url, str) and not base_url)
+
+        # Semantic memory: disable if referenced OpenAI resources are empty
+        if self.semantic_memory.enabled:
+            embedder_id = self.semantic_memory.embedding_model
+            if (
+                embedder_id
+                and embedder_id in self.resources.embedders.openai
+                and _is_openai_incomplete(self.resources.embedders.openai[embedder_id])
+            ):
+                logger.warning(
+                    "Semantic memory auto-disabled: embedding model '%s' has empty "
+                    "OpenAI credentials and no base_url.",
+                    embedder_id,
+                )
+                self.semantic_memory.enabled = False
+
+            lm_id = self.semantic_memory.llm_model
+            if self.semantic_memory.enabled and lm_id:
+                if (
+                    lm_id
+                    in self.resources.language_models.openai_responses_language_model_confs
+                    and _is_openai_incomplete(
+                        self.resources.language_models.openai_responses_language_model_confs[
+                            lm_id
+                        ]
+                    )
+                ):
+                    logger.warning(
+                        "Semantic memory auto-disabled: language model '%s' has empty "
+                        "OpenAI credentials and no base_url.",
+                        lm_id,
+                    )
+                    self.semantic_memory.enabled = False
+                if (
+                    self.semantic_memory.enabled
+                    and lm_id
+                    in self.resources.language_models.openai_chat_completions_language_model_confs
+                    and _is_openai_incomplete(
+                        self.resources.language_models.openai_chat_completions_language_model_confs[
+                            lm_id
+                        ]
+                    )
+                ):
+                    logger.warning(
+                        "Semantic memory auto-disabled: language model '%s' has empty "
+                        "OpenAI credentials and no base_url.",
+                        lm_id,
+                    )
+                    self.semantic_memory.enabled = False
+
+        # Episodic memory: disable long/short term if OpenAI resources are empty
+        em = self.episodic_memory
+        ltm_enabled = em.long_term_memory_enabled is not False
+        stm_enabled = em.short_term_memory_enabled is not False
+
+        if ltm_enabled and em.long_term_memory and em.long_term_memory.embedder:
+            embedder_id = em.long_term_memory.embedder
+            if (
+                embedder_id in self.resources.embedders.openai
+                and _is_openai_incomplete(self.resources.embedders.openai[embedder_id])
+            ):
+                logger.warning(
+                    "Episodic long-term memory auto-disabled: embedder '%s' has empty "
+                    "OpenAI credentials and no base_url.",
+                    embedder_id,
+                )
+                em.long_term_memory_enabled = False
+
+        if stm_enabled and em.short_term_memory and em.short_term_memory.llm_model:
+            lm_id = em.short_term_memory.llm_model
+            if (
+                lm_id in self.resources.language_models.openai_responses_language_model_confs
+                and _is_openai_incomplete(
+                    self.resources.language_models.openai_responses_language_model_confs[
+                        lm_id
+                    ]
+                )
+            ):
+                logger.warning(
+                    "Episodic short-term memory auto-disabled: language model '%s' has "
+                    "empty OpenAI credentials and no base_url.",
+                    lm_id,
+                )
+                em.short_term_memory_enabled = False
+            if (
+                lm_id in self.resources.language_models.openai_chat_completions_language_model_confs
+                and _is_openai_incomplete(
+                    self.resources.language_models.openai_chat_completions_language_model_confs[
+                        lm_id
+                    ]
+                )
+            ):
+                logger.warning(
+                    "Episodic short-term memory auto-disabled: language model '%s' has "
+                    "empty OpenAI credentials and no base_url.",
+                    lm_id,
+                )
+                em.short_term_memory_enabled = False
+
+        if em.long_term_memory_enabled is False and em.short_term_memory_enabled is False:
+            em.enabled = False
+
+        return self
+
     def check_reranker(self, reranker_name: str) -> None:
         long_term_memory = self.episodic_memory.long_term_memory
         if not reranker_name or not long_term_memory:
