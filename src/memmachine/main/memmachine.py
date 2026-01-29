@@ -197,6 +197,18 @@ class MemMachine:
             raise ConfigurationError("Failed to merge configuration") from e
         return episodic_conf
 
+    @staticmethod
+    def _disabled_episodic_conf(session_key: str) -> EpisodicMemoryConf:
+        """Return a minimal episodic config with all memory disabled."""
+        return EpisodicMemoryConf(
+            session_key=session_key,
+            long_term_memory=None,
+            short_term_memory=None,
+            long_term_memory_enabled=False,
+            short_term_memory_enabled=False,
+            enabled=False,
+        )
+
     async def create_session(
         self,
         session_key: str,
@@ -205,10 +217,13 @@ class MemMachine:
         user_conf: EpisodicMemoryConfPartial | None = None,
     ) -> SessionDataManager.SessionInfo:
         """Create a new session."""
-        episodic_memory_conf = self._with_default_episodic_memory_conf(
-            user_conf=user_conf,
-            session_key=session_key,
-        )
+        if not self._conf.episodic_memory.enabled:
+            episodic_memory_conf = self._disabled_episodic_conf(session_key)
+        else:
+            episodic_memory_conf = self._with_default_episodic_memory_conf(
+                user_conf=user_conf,
+                session_key=session_key,
+            )
 
         session_data_manager = await self._resources.get_session_data_manager()
         await session_data_manager.create_new_session(
@@ -266,11 +281,11 @@ class MemMachine:
                 semantic_memory_manager.delete_messages(session_data=session_data),
             )
 
-        tasks = [
-            _delete_episode_store(),
-            _delete_episodic_memory(),
-            _delete_semantic_memory(),
-        ]
+        tasks = [_delete_episode_store()]
+        if self._conf.episodic_memory.enabled:
+            tasks.append(_delete_episodic_memory())
+        if self._conf.semantic_memory.enabled:
+            tasks.append(_delete_semantic_memory())
 
         await asyncio.gather(*tasks)
 
